@@ -1,45 +1,24 @@
 # Node.js CI/CD Pipeline
 
-## Overview
+This repository demonstrates the setup of a Continuous Integration and Continuous Deployment (CI/CD) pipeline for a Node.js application. The pipeline is powered by GitHub Actions, Docker, and Kubernetes.
 
-This project demonstrates a CI/CD pipeline for a Node.js application. It automates the following:
+## Approach
 
-1. Runs tests on pull requests.
-2. Builds a Docker image.
-3. Deploys the image to a Kubernetes cluster.
-4. Notifies about deployment status.
+### CI Workflow
+1. **Test on Pull Requests**: The workflow runs tests automatically on every pull request to the `main` branch.
+2. **Build Docker Image**: On merging to `main`, the application is containerized using Docker.
+3. **Kubernetes Deployment**: The Docker image is deployed to a Kubernetes cluster.
 
-## Project Structure
+### Secrets
+Make sure to store the following secrets in your GitHub repository:
+- `DOCKER_USERNAME` and `DOCKER_PASSWORD` for Docker login.
+- `KUBECONFIG` for Kubernetes access.
+- `SLACK_WEBHOOK_URL` for deployment notifications.
 
-- `src/`: Contains application source code.
-- `tests/`: Contains test files.
-- `kubernetes/`: Contains Kubernetes manifests for deployment.
-- `.github/workflows/ci-cd.yml`: GitHub Actions workflow for CI/CD.
+### Kubernetes Setup
+The deployment is handled by a simple Kubernetes YAML file located in the `kubernetes/` directory.
 
-## How It Works
-
-1. **Testing:** Every pull request triggers automated tests.
-2. **Building:** Upon merging to the main branch, a Docker image is built and pushed to a Docker repository.
-3. **Deploying:** The Docker image is deployed to a Kubernetes cluster using `kubectl`.
-4. **Notifications:** Deployment success or failure is notified.
-
-## Prerequisites
-
-- Docker Hub account
-- Kubernetes cluster
-- GitHub repository secrets:
-  - `DOCKER_USERNAME`
-  - `DOCKER_PASSWORD`
-  - `KUBECONFIG`
-
-## Running Locally
-
-```bash
-# Install dependencies
-npm install
-
-# Run the app
-npm start
-
-# Run tests
-npm test
+## How to Run Locally
+1. Clone the repo.
+2. Run `npm install` to install dependencies.
+3. Run `npm test` to run the test suite.
