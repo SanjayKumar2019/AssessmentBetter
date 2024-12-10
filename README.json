@@ -1,24 +1,198 @@
-# Node.js CI/CD Pipeline
+# Node.js Application with CI/CD Pipeline on AWS EKS
 
-This repository demonstrates the setup of a Continuous Integration and Continuous Deployment (CI/CD) pipeline for a Node.js application. The pipeline is powered by GitHub Actions, Docker, and Kubernetes.
+This repository contains a Node.js application along with a CI/CD pipeline that automates testing, building, and deployment using **GitHub Actions**, **Docker**, and **AWS EKS** (Elastic Kubernetes Service).
 
-## Approach
+## Overview
 
-### CI Workflow
-1. **Test on Pull Requests**: The workflow runs tests automatically on every pull request to the `main` branch.
-2. **Build Docker Image**: On merging to `main`, the application is containerized using Docker.
-3. **Kubernetes Deployment**: The Docker image is deployed to a Kubernetes cluster.
+The repository contains:
 
-### Secrets
-Make sure to store the following secrets in your GitHub repository:
-- `DOCKER_USERNAME` and `DOCKER_PASSWORD` for Docker login.
-- `KUBECONFIG` for Kubernetes access.
-- `SLACK_WEBHOOK_URL` for deployment notifications.
+- A simple Node.js application.
+- A CI/CD pipeline defined in GitHub Actions.
+- Integration with AWS EKS for deploying the application to a Kubernetes cluster.
+- Notifications for deployment success/failure sent to **Slack**.
 
-### Kubernetes Setup
-The deployment is handled by a simple Kubernetes YAML file located in the `kubernetes/` directory.
+## Requirements
 
-## How to Run Locally
-1. Clone the repo.
-2. Run `npm install` to install dependencies.
-3. Run `npm test` to run the test suite.
+- **AWS Account**: To create and manage EKS clusters and associated resources.
+- **AWS CLI**: To interact with AWS services via the command line.
+- **kubectl**: To interact with your Kubernetes cluster.
+- **Slack Webhook URL**: To receive deployment notifications.
+- **Docker**: For building container images.
+- **GitHub Secrets**: For securely storing credentials like Docker credentials, AWS credentials, and Slack Webhook URL.
+
+## Setup and Configuration
+
+### 1. AWS Setup
+
+Before proceeding, ensure you have an AWS account with the necessary permissions to create resources. You'll need:
+
+- **EKS Cluster**: Follow the steps below to create an EKS cluster in AWS.
+
+#### Create an EKS Cluster with AWS CLI
+
+Run the following commands to create the necessary AWS resources, including VPC, subnets, IAM roles, and EKS cluster.
+
+```bash
+# Create the VPC and subnets
+aws ec2 create-vpc --cidr-block 10.0.0.0/16 --region us-west-2 --output json
+VPC_ID=$(aws ec2 describe-vpcs --filters "Name=cidr,Values=10.0.0.0/16" --query "Vpcs[0].VpcId" --output text)
+
+# Create subnets in multiple availability zones
+aws ec2 create-subnet --vpc-id $VPC_ID --cidr-block 10.0.1.0/24 --availability-zone us-west-2a --output json
+aws ec2 create-subnet --vpc-id $VPC_ID --cidr-block 10.0.2.0/24 --availability-zone us-west-2b --output json
+
+# Enable DNS resolution and support
+aws ec2 modify-vpc-attribute --vpc-id $VPC_ID --enable-dns-support
+aws ec2 modify-vpc-attribute --vpc-id $VPC_ID --enable-dns-hostnames
+
+# Create IAM roles for EKS
+aws iam create-role --role-name EKS-Cluster-Role --assume-role-policy-document file://eks-role-trust-policy.json
+
+# Attach policies to the role
+aws iam attach-role-policy --role-name EKS-Cluster-Role --policy-arn arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+aws iam attach-role-policy --role-name EKS-Cluster-Role --policy-arn arn:aws:iam::aws:policy/AmazonEKSServicePolicy
+aws iam attach-role-policy --role-name EKS-Cluster-Role --policy-arn arn:aws:iam::aws:policy/AmazonVPCFullAccess
+
+# Create EKS Cluster
+aws eks --region us-west-2 create-cluster --name my-cluster1 --role-arn arn:aws:iam::145023115393:role/EKS-Cluster-Role --resources-vpc-config subnetIds=subnet-xxxxxx,subnet-yyyyyy
+
+# Update kubectl kubeconfig
+aws eks --region us-west-2 update-kubeconfig --name my-cluster1
+```
+
+### 2. Docker Setup
+
+Create a **Dockerfile** for the Node.js application. Here’s an example:
+
+```dockerfile
+# Use official Node.js image as a base
+FROM node:16
+
+# Set the working directory
+WORKDIR /usr/src/app
+
+# Copy the package.json and install dependencies
+COPY package*.json ./
+RUN npm install
+
+# Copy the rest of the application code
+COPY . .
+
+# Expose the application port
+EXPOSE 3000
+
+# Command to run the application
+CMD ["npm", "start"]
+```
+
+### 3. GitHub Actions CI/CD Pipeline
+
+This repository uses **GitHub Actions** to automatically build, test, and deploy the application to the EKS cluster.
+
+#### GitHub Actions Workflow
+
+Create a `.github/workflows/ci-cd-pipeline.yml` file with the following content:
+
+```yaml
+name: Node.js CI/CD Pipeline
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '16'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run tests
+        run: npm test
+
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Log in to DockerHub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build Docker image
+        run: |
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/nodejs-app:${{ github.sha }} .
+          docker push ${{ secrets.DOCKER_USERNAME }}/nodejs-app:${{ github.sha }}
+
+      - name: Set up Kubeconfig
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          region: us-west-2
+
+      - name: Deploy to Kubernetes
+        run: |
+          kubectl set image deployment/nodejs-app nodejs-app=${{ secrets.DOCKER_USERNAME }}/nodejs-app:${{ github.sha }}
+          kubectl rollout status deployment/nodejs-app
+
+  notify:
+    runs-on: ubuntu-latest
+    needs: build-and-deploy
+    steps:
+      - name: Send Slack notification on success
+        if: success()
+        run: |
+          curl -X POST -H 'Content-type: application/json' --data '{"text":"Deployment successful! App is live."}' ${{ secrets.SLACK_WEBHOOK_URL }}
+      
+      - name: Send Slack notification on failure
+        if: failure()
+        run: |
+          curl -X POST -H 'Content-type: application/json' --data '{"text":"Deployment failed. Please check the logs."}' ${{ secrets.SLACK_WEBHOOK_URL }}
+```
+
+### 4. GitHub Secrets
+
+In your GitHub repository, store the following secrets under **Settings > Secrets**:
+
+- `DOCKER_USERNAME`: Your Docker Hub username.
+- `DOCKER_PASSWORD`: Your Docker Hub password.
+- `AWS_ACCESS_KEY_ID`: Your AWS Access Key.
+- `AWS_SECRET_ACCESS_KEY`: Your AWS Secret Access Key.
+- `SLACK_WEBHOOK_URL`: Your Slack Webhook URL for notifications.
+- `KUBECONFIG`: Your Kubernetes config file (for setting up `kubectl`).
+
+### 5. Running the Application
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/repo-name.git
+   ```
+
+2. Build the application locally:
+   ```bash
+   docker build -t nodejs-app .
+   docker run -p 3000:3000 nodejs-app
+   ```
+
+3. After the GitHub Actions pipeline runs successfully, the Node.js application will be deployed to your EKS cluster.
+
+## Conclusion
+
+This setup automates the entire process of testing, building, and deploying a Node.js application to AWS EKS using a CI/CD pipeline. The integration with Slack ensures that you are notified of any deployment successes or failures.
